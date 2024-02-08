@@ -1,0 +1,14 @@
+version: '3.8'
+
+#https://tsmx.net/docker-local-mongodb/
+services:
+  financeDataServer:
+    image: finance-data-server:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+#    ports:
+#      - "53045:53045"
+    environment:
+      SPRING_DATA_MONGODB_URI: mongodb://localhost:27017/polygon
+    network_mode: host
