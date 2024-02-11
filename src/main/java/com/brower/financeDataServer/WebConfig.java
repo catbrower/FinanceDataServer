@@ -3,14 +3,16 @@ package com.brower.financeDataServer;
 import com.brower.financeDataServer.data.aggregate.AggregatesWebSocketHandler;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
-import io.netty.handler.ssl.util.SelfSignedCertificate;
-import org.bouncycastle.asn1.x500.X500Name;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.web.embedded.netty.NettyReactiveWebServerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
+import org.springframework.security.core.userdetails.MapReactiveUserDetailsService;
+import org.springframework.security.core.userdetails.User;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.web.server.SecurityWebFilterChain;
 import org.springframework.web.reactive.HandlerMapping;
 import org.springframework.web.reactive.config.EnableWebFlux;
@@ -19,13 +21,7 @@ import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 
 import javax.net.ssl.SSLException;
-import javax.net.ssl.X509ExtendedKeyManager;
 import java.io.File;
-import java.math.BigInteger;
-import java.security.KeyPair;
-import java.security.KeyPairGenerator;
-import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
 import java.security.cert.CertificateException;
 import java.util.HashMap;
 import java.util.Map;
@@ -47,7 +43,17 @@ public class WebConfig implements WebFluxConfigurer {
 
     @Bean
     public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
-        return http.authorizeExchange(exchanges -> exchanges.anyExchange().permitAll()).build();
+//        Basic auth
+        http
+                .authorizeExchange(exchanges -> exchanges.anyExchange().authenticated())
+                .httpBasic(Customizer.withDefaults())
+                .formLogin(Customizer.withDefaults());
+
+//        http
+//                .authorizeExchange((authorizeExchangeSpec -> authorizeExchangeSpec.anyExchange().authenticated()))
+//                .oauth2ResourceServer(oAuth2ResourceServerSpec -> oAuth2ResourceServerSpec.jwt(Customizer.withDefaults()));
+
+        return http.build();
     }
 
     @Bean
@@ -58,4 +64,34 @@ public class WebConfig implements WebFluxConfigurer {
         factory.addServerCustomizers(server -> server.secure(sslContextSpec -> sslContextSpec.sslContext(sslCtx)));
         return factory;
     }
+
+    // For testing only
+    @Bean
+    public MapReactiveUserDetailsService userDetailsService() {
+        UserDetails user = User
+                .withDefaultPasswordEncoder()
+                .username("user")
+                .password("password")
+                .roles("USER")
+                .build();
+        return new MapReactiveUserDetailsService(user);
+    }
+
+// Use something like this for prod
+//    @Service
+//    class UserService(private val customerService: CustomerService) : ReactiveUserDetailsService {
+//
+//        override fun findByUsername(username: String?): Mono<UserDetails> = mono {
+//            val customer: Customer = customerService.findByEmail(username!!)
+//            ?: throw BadCredentialsException("Invalid Credentials")
+//
+//            val authorities: List<GrantedAuthority> = listOf(customer)
+//
+//            org.springframework.security.core.userdetails.User(
+//                    customer.email,
+//                    customer.password,
+//                    authorities
+//            )
+//        }
+//    }
 }
