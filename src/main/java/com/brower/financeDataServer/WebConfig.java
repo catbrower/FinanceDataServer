@@ -1,37 +1,47 @@
 package com.brower.financeDataServer;
 
 import com.brower.financeDataServer.data.aggregate.AggregatesWebSocketHandler;
+import com.brower.financeDataServer.data.user.UserService;
 import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.SslContextBuilder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.web.embedded.netty.NettyReactiveWebServerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.config.Customizer;
+import org.springframework.security.authentication.ReactiveAuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.config.annotation.method.configuration.EnableReactiveMethodSecurity;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
+import org.springframework.security.config.web.server.SecurityWebFiltersOrder;
 import org.springframework.security.config.web.server.ServerHttpSecurity;
-import org.springframework.security.core.userdetails.MapReactiveUserDetailsService;
-import org.springframework.security.core.userdetails.User;
-import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.web.server.SecurityWebFilterChain;
+import org.springframework.security.web.server.authentication.AuthenticationWebFilter;
 import org.springframework.web.reactive.HandlerMapping;
 import org.springframework.web.reactive.config.EnableWebFlux;
 import org.springframework.web.reactive.config.WebFluxConfigurer;
 import org.springframework.web.reactive.handler.SimpleUrlHandlerMapping;
 import org.springframework.web.reactive.socket.WebSocketHandler;
+import org.springframework.web.server.ServerWebExchange;
+import reactor.core.publisher.Mono;
 
 import javax.net.ssl.SSLException;
 import java.io.File;
 import java.security.cert.CertificateException;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
 @Configuration
 @EnableWebFlux
 @EnableWebFluxSecurity
+@EnableReactiveMethodSecurity
 public class WebConfig implements WebFluxConfigurer {
     @Autowired
     AggregatesWebSocketHandler aggregatesWebSocketHandler;
+
+    @Autowired
+    UserService userService;
 
     @Bean
     public HandlerMapping handlerMapping() {
@@ -41,18 +51,44 @@ public class WebConfig implements WebFluxConfigurer {
         return new SimpleUrlHandlerMapping(map, -1);
     }
 
+    ReactiveAuthenticationManager customAuthenticationManger() {
+        return authentication -> {
+            String name = authentication.getName();
+            String password = authentication.getCredentials().toString();
+
+            return Mono.just(new UsernamePasswordAuthenticationToken(
+                    name, password, new ArrayList<>()));
+        };
+    }
+
+    ReactiveAuthenticationManagerResolver<ServerWebExchange> resolver() {
+        return exchange -> {
+            return Mono.just(customAuthenticationManger());
+        };
+    }
+
     @Bean
     public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
-//        Basic auth
         http
-                .authorizeExchange(exchanges -> exchanges.anyExchange().authenticated())
-                .httpBasic(Customizer.withDefaults())
-                .formLogin(Customizer.withDefaults());
+                .authorizeExchange(exchanges -> exchanges
+                        .pathMatchers("/api/users/create")
+                        .permitAll()
+                        .anyExchange()
+                        .authenticated()
+                )
+                .httpBasic(ServerHttpSecurity.HttpBasicSpec::disable)
+                .addFilterAfter(
+                        new AuthenticationWebFilter((ReactiveAuthenticationManager) authentication -> {
+                            String name = authentication.getName();
+                            String password = authentication.getCredentials().toString();
 
-//        http
-//                .authorizeExchange((authorizeExchangeSpec -> authorizeExchangeSpec.anyExchange().authenticated()))
-//                .oauth2ResourceServer(oAuth2ResourceServerSpec -> oAuth2ResourceServerSpec.jwt(Customizer.withDefaults()));
-
+                            return userService.getUserByEmail(name)
+                                    .switchIfEmpty(Mono.error(new UsernameNotFoundException("")))
+                                    .map(user -> new UsernamePasswordAuthenticationToken(
+                                            name, password, new ArrayList<>()));
+                        }),
+                        SecurityWebFiltersOrder.REACTOR_CONTEXT)
+                .csrf(ServerHttpSecurity.CsrfSpec::disable);
         return http.build();
     }
 
@@ -64,34 +100,4 @@ public class WebConfig implements WebFluxConfigurer {
         factory.addServerCustomizers(server -> server.secure(sslContextSpec -> sslContextSpec.sslContext(sslCtx)));
         return factory;
     }
-
-    // For testing only
-    @Bean
-    public MapReactiveUserDetailsService userDetailsService() {
-        UserDetails user = User
-                .withDefaultPasswordEncoder()
-                .username("user")
-                .password("password")
-                .roles("USER")
-                .build();
-        return new MapReactiveUserDetailsService(user);
-    }
-
-// Use something like this for prod
-//    @Service
-//    class UserService(private val customerService: CustomerService) : ReactiveUserDetailsService {
-//
-//        override fun findByUsername(username: String?): Mono<UserDetails> = mono {
-//            val customer: Customer = customerService.findByEmail(username!!)
-//            ?: throw BadCredentialsException("Invalid Credentials")
-//
-//            val authorities: List<GrantedAuthority> = listOf(customer)
-//
-//            org.springframework.security.core.userdetails.User(
-//                    customer.email,
-//                    customer.password,
-//                    authorities
-//            )
-//        }
-//    }
 }
